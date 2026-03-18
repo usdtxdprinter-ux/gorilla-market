@@ -45,7 +45,7 @@ const API_TO_DB_NAME = {
   'McNeese State Cowboys': 'McNeese', 'McNeese St Cowboys': 'McNeese',
   'Nebraska Cornhuskers': 'Nebraska', 'Troy Trojans': 'Troy',
   'North Carolina Tar Heels': 'North Carolina', 'UNC Tar Heels': 'North Carolina',
-  'VCU Rams': 'VCU', 'Illinois Fighting Illini': 'Illinois', 'Penn Quakers': 'Penn',
+  'VCU Rams': 'VCU', 'Illinois Fighting Illini': 'Illinois', 'Penn Quakers': 'Penn', 'Pennsylvania Quakers': 'Penn',
   "Saint Mary's Gaels": "Saint Mary's", "St. Mary's Gaels": "Saint Mary's",
   'Texas A&M Aggies': 'Texas A&M', 'Houston Cougars': 'Houston', 'Idaho Vandals': 'Idaho',
   'Howard Bison': 'Howard', 'Texas Longhorns': 'Texas',
