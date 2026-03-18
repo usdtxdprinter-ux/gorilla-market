@@ -191,10 +191,10 @@ async function updateScoresFromAPI() {
         team1Score = awayScore; team2Score = homeScore;
       }
 
-      // Update scores (keep as 'live' for now)
+      // Update scores and game time
       await pool.query(
-        "UPDATE games SET team1_score = $1, team2_score = $2, status = 'live' WHERE id = $3",
-        [team1Score, team2Score, dbGame.id]
+        "UPDATE games SET team1_score = $1, team2_score = $2, status = 'live', game_time = COALESCE(game_time, $4) WHERE id = $3",
+        [team1Score, team2Score, dbGame.id, apiGame.commence_time || null]
       );
       updated++;
 
@@ -259,6 +259,14 @@ async function updateOdds() {
       bookmaker: bookie.title,
       last_update: h2h.last_update
     };
+
+    // Also save game_time from odds API (commence_time)
+    if (game.commence_time) {
+      await pool.query(
+        'UPDATE games SET game_time = COALESCE(game_time, $1) WHERE id = $2',
+        [game.commence_time, dbGame.id]
+      );
+    }
   }
 
   currentOdds = odds;
