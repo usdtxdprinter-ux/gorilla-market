@@ -11,6 +11,20 @@ function formatOdds(price) {
   return price > 0 ? `+${price}` : `${price}`;
 }
 
+function formatGameTime(isoString) {
+  if (!isoString) return null;
+  const d = new Date(isoString);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const tomorrow = new Date(now); tomorrow.setDate(tomorrow.getDate() + 1);
+  const isTomorrow = d.toDateString() === tomorrow.toDateString();
+  
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  if (isToday) return 'Today ' + time;
+  if (isTomorrow) return 'Tomorrow ' + time;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + time;
+}
+
 export default function BracketView({ games, picks = {}, onPickTeam, region, showPicks = false, odds = {} }) {
   const regionGames = useMemo(() => {
     if (!games) return {};
@@ -48,84 +62,88 @@ export default function BracketView({ games, picks = {}, onPickTeam, region, sho
 }
 
 function GameCard({ game, pick, onPickTeam, showPicks, odds }) {
-  const team1Pick = pick === game.team1_id;
-  const team2Pick = pick === game.team2_id;
+  const t1 = game.team1_id;
+  const t2 = game.team2_id;
+  const team1Pick = pick === t1;
+  const team2Pick = pick === t2;
   const gameFinished = game.status === 'final';
   const isLive = game.status === 'live';
+  const isPickable = t1 && t2 && game.status === 'upcoming';
 
-  const getTeamClass = (teamId, isPicked) => {
-    const classes = ['game-team'];
-    if (!teamId) return classes.join(' ');
-    if (gameFinished && game.winner_id === teamId) classes.push('winner');
-    if (gameFinished && game.winner_id && game.winner_id !== teamId) classes.push('loser');
+  const getClass = (teamId, isPicked) => {
+    const c = ['game-team'];
+    if (!teamId) return c.join(' ');
+    if (game._busted && game._busted.has(teamId)) { c.push('busted'); return c.join(' '); }
+    if (gameFinished && game.winner_id === teamId) c.push('winner');
+    if (gameFinished && game.winner_id && game.winner_id !== teamId) c.push('loser');
     if (showPicks && isPicked) {
-      classes.push('picked');
-      if (gameFinished) classes.push(game.winner_id === teamId ? 'correct' : 'wrong');
+      c.push('picked');
+      if (gameFinished) c.push(game.winner_id === teamId ? 'correct' : 'wrong');
     }
-    return classes.join(' ');
+    return c.join(' ');
   };
 
   const handleClick = (teamId) => {
-    if (onPickTeam && teamId && game.status === 'upcoming') {
-      onPickTeam(game.id, teamId, game.next_game_id, game.round);
-    }
+    if (onPickTeam && teamId && isPickable && !(game._busted && game._busted.has(teamId)))
+      onPickTeam(game.id, teamId);
+  };
+
+  const isBusted = (teamId) => game._busted && game._busted.has(teamId);
+
+  const gameTime = formatGameTime(game.game_time);
+  const hasOdds = odds && (odds.team1_odds != null || odds.team2_odds != null);
+
+  const renderTeam = (teamId, teamName, teamSeed, isPicked, oddsVal, score) => {
+    const busted = isBusted(teamId);
+    return (
+      <div className={getClass(teamId, isPicked)}
+        onClick={() => handleClick(teamId)}
+        style={{ cursor: onPickTeam && isPickable && !busted ? 'pointer' : 'default' }}>
+        {teamId ? (
+          <>
+            {showPicks && isPicked && !busted && (
+              <div className={`pick-indicator ${gameFinished ? (game.winner_id === teamId ? 'correct' : 'wrong') : 'pending'}`} />
+            )}
+            {busted && <div className="pick-indicator wrong" />}
+            <span className="team-seed" style={busted ? { opacity: 0.4 } : undefined}>{teamSeed}</span>
+            <span className="team-name" style={busted ? { textDecoration: 'line-through', opacity: 0.4 } : undefined}>{teamName}</span>
+            {busted && <span style={{ fontSize: '0.65rem', color: 'var(--wrong)', fontFamily: 'var(--font-heading)', textTransform: 'uppercase' }}>OUT</span>}
+            {oddsVal != null && !gameFinished && !busted && (
+              <span style={{
+                fontSize: '0.7rem', fontFamily: 'var(--font-heading)', fontWeight: 600,
+                color: oddsVal < 0 ? 'var(--accent-gold)' : 'var(--text-muted)',
+                minWidth: '40px', textAlign: 'right',
+                padding: '1px 4px', borderRadius: '3px',
+                background: oddsVal < 0 ? 'rgba(255,200,45,0.1)' : 'transparent'
+              }}>
+                {formatOdds(oddsVal)}
+              </span>
+            )}
+            {score != null && <span className="team-score">{score}</span>}
+          </>
+        ) : (
+          <span className="team-empty">TBD</span>
+        )}
+      </div>
+    );
   };
 
   return (
     <div className={`game-card ${isLive ? 'live' : ''}`}>
-      {/* Team 1 */}
-      <div className={getTeamClass(game.team1_id, team1Pick)}
-        onClick={() => handleClick(game.team1_id)}
-        style={{ cursor: onPickTeam && game.team1_id && game.status === 'upcoming' ? 'pointer' : 'default' }}>
-        {game.team1_id ? (
-          <>
-            {showPicks && team1Pick && (
-              <div className={`pick-indicator ${gameFinished ? (game.winner_id === game.team1_id ? 'correct' : 'wrong') : 'pending'}`} />
-            )}
-            <span className="team-seed">{game.team1_seed}</span>
-            <span className="team-name">{game.team1_name}</span>
-            {odds?.team1_odds != null && !gameFinished && (
-              <span className="team-odds" style={{
-                fontSize: '0.68rem', fontFamily: 'var(--font-heading)',
-                color: odds.team1_odds < 0 ? 'var(--accent-gold)' : 'var(--text-muted)',
-                minWidth: '36px', textAlign: 'right'
-              }}>{formatOdds(odds.team1_odds)}</span>
-            )}
-            {(game.team1_score != null && game.team1_score !== undefined) && (
-              <span className="team-score">{game.team1_score}</span>
-            )}
-          </>
-        ) : (
-          <span className="team-empty">TBD</span>
-        )}
-      </div>
-
-      {/* Team 2 */}
-      <div className={getTeamClass(game.team2_id, team2Pick)}
-        onClick={() => handleClick(game.team2_id)}
-        style={{ cursor: onPickTeam && game.team2_id && game.status === 'upcoming' ? 'pointer' : 'default' }}>
-        {game.team2_id ? (
-          <>
-            {showPicks && team2Pick && (
-              <div className={`pick-indicator ${gameFinished ? (game.winner_id === game.team2_id ? 'correct' : 'wrong') : 'pending'}`} />
-            )}
-            <span className="team-seed">{game.team2_seed}</span>
-            <span className="team-name">{game.team2_name}</span>
-            {odds?.team2_odds != null && !gameFinished && (
-              <span className="team-odds" style={{
-                fontSize: '0.68rem', fontFamily: 'var(--font-heading)',
-                color: odds.team2_odds < 0 ? 'var(--accent-gold)' : 'var(--text-muted)',
-                minWidth: '36px', textAlign: 'right'
-              }}>{formatOdds(odds.team2_odds)}</span>
-            )}
-            {(game.team2_score != null && game.team2_score !== undefined) && (
-              <span className="team-score">{game.team2_score}</span>
-            )}
-          </>
-        ) : (
-          <span className="team-empty">TBD</span>
-        )}
-      </div>
+      {/* Game time / odds source bar */}
+      {(gameTime || (hasOdds && !gameFinished)) && !isLive && game.status === 'upcoming' && (
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '3px 10px', fontSize: '0.6rem', fontFamily: 'var(--font-heading)',
+          color: 'var(--text-muted)', borderBottom: '1px solid rgba(255,255,255,0.04)',
+          textTransform: 'uppercase', letterSpacing: '0.5px'
+        }}>
+          <span>{gameTime || ''}</span>
+          {hasOdds && <span style={{ color: 'var(--accent-gold)', opacity: 0.6 }}>{odds.bookmaker || 'Odds'}</span>}
+        </div>
+      )}
+      {renderTeam(t1, game.team1_name, game.team1_seed, team1Pick, odds?.team1_odds, game.team1_score)}
+      {renderTeam(t2, game.team2_name, game.team2_seed, team2Pick, odds?.team2_odds, game.team2_score)}
     </div>
   );
 }
