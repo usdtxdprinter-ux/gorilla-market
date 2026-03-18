@@ -92,6 +92,7 @@ export default function MyBracket() {
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState('');
+  const [odds, setOdds] = useState({});
 
   // NO useMemo - just compute every render to eliminate caching bugs
   const games = propagatePicks(rawGames, picks);
@@ -100,12 +101,14 @@ export default function MyBracket() {
 
   const loadBrackets = async () => {
     try {
-      const [userBrackets, bracketData] = await Promise.all([
+      const [userBrackets, bracketData, oddsData] = await Promise.all([
         api.getUserBrackets(user.id),
-        api.getBracket()
+        api.getBracket(),
+        api.getOdds().catch(() => ({}))
       ]);
       setBrackets(userBrackets);
       setRawGames(bracketData);
+      setOdds(oddsData);
 
       // DEBUG: check if next_game_id exists
       const r1 = bracketData.filter(g => g.round === 1);
@@ -279,7 +282,7 @@ export default function MyBracket() {
             ))}
           </div>
           <div className="scroll-hint">← Swipe to scroll bracket →</div>
-          <BracketView games={games} picks={picks} onPickTeam={handlePick} region={region} showPicks={true} />
+          <BracketView games={games} picks={picks} onPickTeam={handlePick} region={region} showPicks={true} odds={odds} />
           <div className="save-bar">
             <span className="pick-count"><strong>{activeBracket.name}</strong> — <strong>{pickedCount}</strong>/63</span>
             <button className="btn btn-primary" onClick={handleSave} disabled={saving || pickedCount === 0}>

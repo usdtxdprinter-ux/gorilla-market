@@ -9,6 +9,7 @@ const REGIONS = ['South', 'West', 'East', 'Midwest', 'Final Four'];
 export default function CompareBrackets() {
   const { user } = useAuth();
   const [games, setGames] = useState([]);
+  const [odds, setOdds] = useState({});
   const [allBrackets, setAllBrackets] = useState([]);
   const [selectedBracket, setSelectedBracket] = useState(null);
   const [picks, setPicks] = useState({});
@@ -19,8 +20,9 @@ export default function CompareBrackets() {
 
   const loadData = async () => {
     try {
-      const [bracketData, brackets] = await Promise.all([api.getBracket(), api.getAllBrackets()]);
+      const [bracketData, brackets, oddsData] = await Promise.all([api.getBracket(), api.getAllBrackets(), api.getOdds().catch(() => ({}))]);
       setGames(bracketData);
+      setOdds(oddsData);
       setAllBrackets(brackets);
       const mine = brackets.find(b => b.user_id === user.id);
       const first = mine || brackets[0];
@@ -103,7 +105,7 @@ export default function CompareBrackets() {
       </div>
 
       <div className="scroll-hint">← Swipe to scroll bracket →</div>
-      <BracketView games={games} picks={picks} region={region} showPicks={true} />
+      <BracketView games={games} picks={picks} region={region} showPicks={true} odds={odds} />
     </div>
   );
 }
