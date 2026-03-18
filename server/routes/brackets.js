@@ -16,8 +16,8 @@ router.get('/user/:userId', async (req, res) => {
         COUNT(CASE WHEN p.is_correct = false THEN 1 END) as wrong_picks
       FROM brackets b
       LEFT JOIN picks p ON b.id = p.bracket_id
+      WHERE b.user_id = $1
       GROUP BY b.id
-      HAVING b.user_id = $1
       ORDER BY b.created_at
     `, [req.params.userId]);
     res.json(result.rows);
