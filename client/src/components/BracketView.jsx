@@ -1,5 +1,4 @@
 // client/src/components/BracketView.jsx
-// DUMB component - just renders whatever games it receives. No logic.
 import { useMemo } from 'react';
 
 const ROUND_NAMES = {
@@ -10,6 +9,20 @@ const ROUND_NAMES = {
 function formatOdds(price) {
   if (!price && price !== 0) return '';
   return price > 0 ? `+${price}` : `${price}`;
+}
+
+function formatGameTime(isoString) {
+  if (!isoString) return null;
+  const d = new Date(isoString);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const tomorrow = new Date(now); tomorrow.setDate(tomorrow.getDate() + 1);
+  const isTomorrow = d.toDateString() === tomorrow.toDateString();
+  
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  if (isToday) return 'Today ' + time;
+  if (isTomorrow) return 'Tomorrow ' + time;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + time;
 }
 
 export default function BracketView({ games, picks = {}, onPickTeam, region, showPicks = false, odds = {} }) {
@@ -77,6 +90,9 @@ function GameCard({ game, pick, onPickTeam, showPicks, odds }) {
 
   const isBusted = (teamId) => game._busted && game._busted.has(teamId);
 
+  const gameTime = formatGameTime(game.game_time);
+  const hasOdds = odds && (odds.team1_odds != null || odds.team2_odds != null);
+
   const renderTeam = (teamId, teamName, teamSeed, isPicked, oddsVal, score) => {
     const busted = isBusted(teamId);
     return (
@@ -93,7 +109,13 @@ function GameCard({ game, pick, onPickTeam, showPicks, odds }) {
             <span className="team-name" style={busted ? { textDecoration: 'line-through', opacity: 0.4 } : undefined}>{teamName}</span>
             {busted && <span style={{ fontSize: '0.65rem', color: 'var(--wrong)', fontFamily: 'var(--font-heading)', textTransform: 'uppercase' }}>OUT</span>}
             {oddsVal != null && !gameFinished && !busted && (
-              <span style={{ fontSize: '0.68rem', fontFamily: 'var(--font-heading)', color: oddsVal < 0 ? 'var(--accent-gold)' : 'var(--text-muted)', minWidth: '36px', textAlign: 'right' }}>
+              <span style={{
+                fontSize: '0.7rem', fontFamily: 'var(--font-heading)', fontWeight: 600,
+                color: oddsVal < 0 ? 'var(--accent-gold)' : 'var(--text-muted)',
+                minWidth: '40px', textAlign: 'right',
+                padding: '1px 4px', borderRadius: '3px',
+                background: oddsVal < 0 ? 'rgba(255,200,45,0.1)' : 'transparent'
+              }}>
                 {formatOdds(oddsVal)}
               </span>
             )}
@@ -108,6 +130,18 @@ function GameCard({ game, pick, onPickTeam, showPicks, odds }) {
 
   return (
     <div className={`game-card ${isLive ? 'live' : ''}`}>
+      {/* Game time / odds source bar */}
+      {(gameTime || (hasOdds && !gameFinished)) && !isLive && game.status === 'upcoming' && (
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '3px 10px', fontSize: '0.6rem', fontFamily: 'var(--font-heading)',
+          color: 'var(--text-muted)', borderBottom: '1px solid rgba(255,255,255,0.04)',
+          textTransform: 'uppercase', letterSpacing: '0.5px'
+        }}>
+          <span>{gameTime || ''}</span>
+          {hasOdds && <span style={{ color: 'var(--accent-gold)', opacity: 0.6 }}>{odds.bookmaker || 'Odds'}</span>}
+        </div>
+      )}
       {renderTeam(t1, game.team1_name, game.team1_seed, team1Pick, odds?.team1_odds, game.team1_score)}
       {renderTeam(t2, game.team2_name, game.team2_seed, team2Pick, odds?.team2_odds, game.team2_score)}
     </div>
