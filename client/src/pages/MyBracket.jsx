@@ -1,16 +1,88 @@
 // client/src/pages/MyBracket.jsx
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../App';
 import { api } from '../api';
 import BracketView from '../components/BracketView';
 
 const REGIONS = ['East', 'West', 'Midwest', 'South', 'Final Four'];
 
+function propagatePicks(rawGames, picks) {
+  if (!rawGames.length) return [];
+
+  // Deep copy
+  const games = JSON.parse(JSON.stringify(rawGames));
+  const byId = {};
+  games.forEach(g => { byId[g.id] = g; });
+
+  // Team info
+  const teamInfo = {};
+  games.forEach(g => {
+    if (g.team1_id) teamInfo[g.team1_id] = { name: g.team1_name, seed: g.team1_seed };
+    if (g.team2_id) teamInfo[g.team2_id] = { name: g.team2_name, seed: g.team2_seed };
+  });
+
+  // Eliminated
+  const eliminated = new Set();
+  games.forEach(g => {
+    if (g.status === 'final' && g.winner_id) {
+      if (g.team1_id && g.team1_id !== g.winner_id) eliminated.add(g.team1_id);
+      if (g.team2_id && g.team2_id !== g.winner_id) eliminated.add(g.team2_id);
+    }
+  });
+
+  // Sort by round THEN by game ID (deterministic tiebreaker)
+  const sorted = games.slice().sort((a, b) => a.round - b.round || a.id - b.id);
+
+  // Track how many times we've written to each next game
+  const slotCounter = {};
+
+  // Walk each game: if user picked a winner, put that team in the next game
+  let propagated = 0;
+  for (const game of sorted) {
+    const pickedId = picks[game.id];
+    if (!pickedId) continue;
+    if (!game.next_game_id) continue;
+
+    const nextGame = byId[game.next_game_id];
+    if (!nextGame) continue;
+
+    const info = teamInfo[pickedId];
+    if (!info) continue;
+
+    const count = slotCounter[game.next_game_id] || 0;
+    slotCounter[game.next_game_id] = count + 1;
+
+    if (count === 0) {
+      nextGame.team1_id = pickedId;
+      nextGame.team1_name = info.name;
+      nextGame.team1_seed = info.seed;
+    } else {
+      nextGame.team2_id = pickedId;
+      nextGame.team2_name = info.name;
+      nextGame.team2_seed = info.seed;
+    }
+    propagated++;
+  }
+
+  console.log(`PROPAGATION: ${Object.keys(picks).length} picks, ${propagated} propagated, ${games.length} games, sample next_game_ids:`, sorted.slice(0,4).map(g => ({ id: g.id, round: g.round, pos: g.position, next: g.next_game_id })));
+
+  // Mark busted
+  games.forEach(g => {
+    const busted = new Set();
+    const raw = rawGames.find(r => r.id === g.id);
+    if (g.team1_id && eliminated.has(g.team1_id) && !raw?.team1_id) busted.add(g.team1_id);
+    if (g.team2_id && eliminated.has(g.team2_id) && !raw?.team2_id) busted.add(g.team2_id);
+    if (busted.size > 0) g._busted = busted;
+  });
+
+  return games;
+}
+
 export default function MyBracket() {
   const { user } = useAuth();
   const [brackets, setBrackets] = useState([]);
   const [activeBracket, setActiveBracket] = useState(null);
-  const [games, setGames] = useState([]);
+  const [rawGames, setRawGames] = useState([]);
   const [picks, setPicks] = useState({});
   const [region, setRegion] = useState('East');
   const [loading, setLoading] = useState(true);
@@ -21,6 +93,9 @@ export default function MyBracket() {
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState('');
 
+  // NO useMemo - just compute every render to eliminate caching bugs
+  const games = propagatePicks(rawGames, picks);
+
   useEffect(() => { loadBrackets(); }, [user]);
 
   const loadBrackets = async () => {
@@ -30,7 +105,12 @@ export default function MyBracket() {
         api.getBracket()
       ]);
       setBrackets(userBrackets);
-      setGames(bracketData);
+      setRawGames(bracketData);
+
+      // DEBUG: check if next_game_id exists
+      const r1 = bracketData.filter(g => g.round === 1);
+      console.log('R1 games next_game_id check:', r1.slice(0,4).map(g => ({ id: g.id, team1: g.team1_name, next: g.next_game_id })));
+
       if (userBrackets.length > 0 && !activeBracket) selectBracket(userBrackets[0]);
     } catch (err) { console.error('Load error:', err); }
     setLoading(false);
@@ -46,85 +126,28 @@ export default function MyBracket() {
     } catch (err) { setPicks({}); }
   };
 
-  // Build "virtual" games where user picks fill in future rounds
-  const virtualGames = useMemo(() => {
-    if (!games.length) return [];
-
-    // Deep copy games so we don't mutate the originals
-    const vGames = games.map(g => ({ ...g }));
-    const gameById = {};
-    vGames.forEach(g => { gameById[g.id] = g; });
-
-    // Build a team lookup from all games
-    const teamInfo = {};
-    vGames.forEach(g => {
-      if (g.team1_id) teamInfo[g.team1_id] = { name: g.team1_name, seed: g.team1_seed };
-      if (g.team2_id) teamInfo[g.team2_id] = { name: g.team2_name, seed: g.team2_seed };
-    });
-
-    // For each pick, propagate the winner into the next game
-    // Process in round order so picks cascade correctly
-    const sortedGames = [...vGames].sort((a, b) => a.round - b.round || a.position - b.position);
-
-    for (const game of sortedGames) {
-      const pickedTeamId = picks[game.id];
-      if (!pickedTeamId) continue;
-      if (!game.next_game_id) continue;
-
-      const nextGame = gameById[game.next_game_id];
-      if (!nextGame) continue;
-
-      // Even position -> fills team1 slot, Odd position -> fills team2 slot
-      const info = teamInfo[pickedTeamId];
-      if (!info) continue;
-
-      if (game.position % 2 === 0) {
-        // Only fill if not already set by actual results
-        if (!nextGame.team1_id || nextGame.team1_id === pickedTeamId) {
-          nextGame.team1_id = pickedTeamId;
-          nextGame.team1_name = info.name;
-          nextGame.team1_seed = info.seed;
-          teamInfo[pickedTeamId] = info; // ensure it's available for further rounds
-        }
-      } else {
-        if (!nextGame.team2_id || nextGame.team2_id === pickedTeamId) {
-          nextGame.team2_id = pickedTeamId;
-          nextGame.team2_name = info.name;
-          nextGame.team2_seed = info.seed;
-          teamInfo[pickedTeamId] = info;
-        }
-      }
-    }
-
-    return vGames;
-  }, [games, picks]);
-
   const handlePick = useCallback((gameId, teamId) => {
+    console.log('PICK:', gameId, teamId);
     setPicks(prev => {
       const updated = { ...prev, [gameId]: teamId };
-
-      // When a pick changes, clear any downstream picks that depended on the old pick
-      // Find the game and trace forward
-      const clearDownstream = (gId, oldTeamId) => {
-        const game = games.find(g => g.id === gId);
-        if (!game || !game.next_game_id) return;
-        const nextPick = updated[game.next_game_id];
-        if (nextPick === oldTeamId) {
-          // The user had picked this team to advance further — clear it
-          delete updated[game.next_game_id];
-          clearDownstream(game.next_game_id, oldTeamId);
-        }
-      };
-
-      // If we're changing our pick for this game, clear old downstream
       const oldPick = prev[gameId];
       if (oldPick && oldPick !== teamId) {
-        clearDownstream(gameId, oldPick);
+        const gameById = {};
+        rawGames.forEach(g => { gameById[g.id] = g; });
+        const clearDown = (gId, deadTeam) => {
+          const g = gameById[gId];
+          if (!g || !g.next_game_id) return;
+          if (updated[g.next_game_id] === deadTeam) {
+            delete updated[g.next_game_id];
+            clearDown(g.next_game_id, deadTeam);
+          }
+        };
+        clearDown(gameId, oldPick);
       }
-
+      console.log('PICKS NOW:', updated);
       return updated;
     });
-  }, [games]);
+  }, [rawGames]);
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
@@ -136,7 +159,6 @@ export default function MyBracket() {
       flash(`"${bracket.name}" created!`);
     } catch (err) { flash('Error: ' + err.message, true); }
   };
-
   const handleRename = async (bracketId) => {
     if (!editName.trim()) return;
     try {
@@ -145,17 +167,26 @@ export default function MyBracket() {
       loadBrackets();
     } catch (err) { flash('Error: ' + err.message, true); }
   };
-
   const handleDelete = async (bracketId, name) => {
-    if (!window.confirm(`Delete "${name}" and all its picks?`)) return;
+    if (!window.confirm('Delete "' + name + '" and all its picks?')) return;
     try {
+      console.log('Deleting bracket:', bracketId);
       await api.deleteBracket(bracketId);
-      if (activeBracket?.id === bracketId) { setActiveBracket(null); setPicks({}); }
-      await loadBrackets();
-      flash(`"${name}" deleted`);
-    } catch (err) { flash('Error: ' + err.message, true); }
+      console.log('Deleted successfully');
+      setActiveBracket(null);
+      setPicks({});
+      // Reload brackets list
+      const userBrackets = await api.getUserBrackets(user.id);
+      setBrackets(userBrackets);
+      if (userBrackets.length > 0) {
+        selectBracket(userBrackets[0]);
+      }
+      flash('"' + name + '" deleted');
+    } catch (err) {
+      console.error('Delete failed:', err);
+      flash('Error: ' + err.message, true);
+    }
   };
-
   const handleSave = async () => {
     if (!activeBracket) return;
     setSaving(true);
@@ -167,31 +198,22 @@ export default function MyBracket() {
     } catch (err) { flash('Error: ' + err.message, true); }
     setSaving(false);
   };
-
   const flash = (msg, isError = false) => {
     setMessage({ text: msg, error: isError });
     setTimeout(() => setMessage(''), 3000);
   };
 
   const pickedCount = Object.keys(picks).length;
-
   if (loading) return <div className="loading"><div className="spinner" /> Loading your brackets...</div>;
 
   return (
     <div>
       <h1 className="page-title">📋 My Brackets</h1>
-      <p className="page-subtitle">Pick winners from Round 1 all the way to the Championship. Your picks fill in future rounds automatically.</p>
-
-      {message && (
-        <div className={`message-bar ${message.error ? 'error' : 'success'}`}>{message.text}</div>
-      )}
-
-      {/* Bracket Cards */}
+      <p className="page-subtitle">Pick winners all the way to the Championship.</p>
+      {message && <div className={`message-bar ${message.error ? 'error' : 'success'}`}>{message.text}</div>}
       <div className="bracket-cards">
         {brackets.map(b => (
-          <div key={b.id}
-            className={`bracket-card ${activeBracket?.id === b.id ? 'active' : ''}`}
-            onClick={() => selectBracket(b)}>
+          <div key={b.id} className={`bracket-card ${activeBracket?.id === b.id ? 'active' : ''}`} onClick={() => selectBracket(b)}>
             {editingId === b.id ? (
               <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: '6px' }}>
                 <input className="login-input" style={{ marginBottom: 0, padding: '6px 10px', fontSize: '16px' }}
@@ -205,8 +227,8 @@ export default function MyBracket() {
                 <div className="bracket-card-header">
                   <span className="bracket-card-name">{b.name}</span>
                   <div className="bracket-card-actions" onClick={e => e.stopPropagation()}>
-                    <button onClick={() => { setEditingId(b.id); setEditName(b.name); }} title="Rename">✏️</button>
-                    <button onClick={() => handleDelete(b.id, b.name)} title="Delete">🗑️</button>
+                    <button onClick={() => { setEditingId(b.id); setEditName(b.name); }}>✏️</button>
+                    <button onClick={() => handleDelete(b.id, b.name)}>🗑️</button>
                   </div>
                 </div>
                 <div className="bracket-card-stats">
@@ -219,36 +241,28 @@ export default function MyBracket() {
             )}
           </div>
         ))}
-
         {brackets.length < 5 && (
           <div className="bracket-card-new" onClick={() => setShowCreate(!showCreate)}>
             {showCreate ? (
               <div style={{ width: '100%' }} onClick={e => e.stopPropagation()}>
                 <input className="login-input" style={{ marginBottom: '8px', padding: '10px 12px', fontSize: '16px' }}
                   placeholder='e.g., "Upset Special"' value={newName}
-                  onChange={e => setNewName(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleCreate()}
-                  autoFocus maxLength={100} />
+                  onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCreate()} autoFocus maxLength={100} />
                 <div style={{ display: 'flex', gap: '6px' }}>
-                  <button className="btn btn-primary" style={{ flex: 1, padding: '10px' }}
-                    onClick={handleCreate} disabled={!newName.trim()}>Create</button>
-                  <button className="btn btn-secondary" style={{ padding: '10px' }}
-                    onClick={() => { setShowCreate(false); setNewName(''); }}>Cancel</button>
+                  <button className="btn btn-primary" style={{ flex: 1, padding: '10px' }} onClick={handleCreate} disabled={!newName.trim()}>Create</button>
+                  <button className="btn btn-secondary" style={{ padding: '10px' }} onClick={() => { setShowCreate(false); setNewName(''); }}>Cancel</button>
                 </div>
               </div>
             ) : (
               <>
                 <span style={{ fontSize: '1.8rem', marginBottom: '4px' }}>+</span>
-                <span style={{ fontFamily: 'var(--font-heading)', fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '1px' }}>
-                  New Bracket ({brackets.length}/5)
-                </span>
+                <span style={{ fontFamily: 'var(--font-heading)', fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '1px' }}>New Bracket ({brackets.length}/5)</span>
               </>
             )}
           </div>
         )}
       </div>
 
-      {/* Bracket Editor */}
       {activeBracket ? (
         <>
           <div style={{ marginBottom: '12px' }}>
@@ -259,24 +273,16 @@ export default function MyBracket() {
               {pickedCount}/63 picks — {pickedCount === 63 ? '🎉 Complete!' : `${63 - pickedCount} remaining`}
             </p>
           </div>
-
           <div className="region-tabs">
             {REGIONS.map(r => (
-              <button key={r} className={`region-tab ${region === r ? 'active' : ''}`}
-                onClick={() => setRegion(r)}>{r}</button>
+              <button key={r} className={`region-tab ${region === r ? 'active' : ''}`} onClick={() => setRegion(r)}>{r}</button>
             ))}
           </div>
-
           <div className="scroll-hint">← Swipe to scroll bracket →</div>
-
-          <BracketView games={virtualGames} picks={picks} onPickTeam={handlePick} region={region} showPicks={true} />
-
+          <BracketView games={games} picks={picks} onPickTeam={handlePick} region={region} showPicks={true} />
           <div className="save-bar">
-            <span className="pick-count">
-              <strong>{activeBracket.name}</strong> — <strong>{pickedCount}</strong>/63
-            </span>
-            <button className="btn btn-primary" onClick={handleSave}
-              disabled={saving || pickedCount === 0}>
+            <span className="pick-count"><strong>{activeBracket.name}</strong> — <strong>{pickedCount}</strong>/63</span>
+            <button className="btn btn-primary" onClick={handleSave} disabled={saving || pickedCount === 0}>
               {saving ? 'Saving...' : 'Save Bracket'}
             </button>
           </div>
