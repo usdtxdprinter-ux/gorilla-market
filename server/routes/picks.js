@@ -3,8 +3,16 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db/pool');
 
+// Lock deadline: March 19, 2026 9:00 AM CDT (14:00 UTC)
+const LOCK_DEADLINE = new Date('2026-03-19T14:00:00Z');
+
 // Submit picks for a specific bracket (bulk)
 router.post('/submit', async (req, res) => {
+  // Check lock
+  if (new Date() >= LOCK_DEADLINE) {
+    return res.status(403).json({ error: 'Brackets are locked! Picks closed at 9:00 AM CT on March 19.' });
+  }
+
   const client = await pool.connect();
   try {
     const { bracket_id, picks } = req.body;
