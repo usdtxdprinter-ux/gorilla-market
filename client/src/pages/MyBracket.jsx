@@ -94,6 +94,10 @@ export default function MyBracket() {
   const [editName, setEditName] = useState('');
   const [odds, setOdds] = useState({});
 
+  // Lock deadline: March 19, 2026 9:00 AM CDT (14:00 UTC)
+  const LOCK_DEADLINE = new Date('2026-03-19T14:00:00Z');
+  const isLocked = new Date() >= LOCK_DEADLINE;
+
   // NO useMemo - just compute every render to eliminate caching bugs
   const games = propagatePicks(rawGames, picks);
 
@@ -213,6 +217,12 @@ export default function MyBracket() {
     <div>
       <h1 className="page-title">📋 My Brackets</h1>
       <p className="page-subtitle">Pick winners all the way to the Championship.</p>
+
+      {isLocked && (
+        <div className="message-bar error" style={{ marginBottom: '16px' }}>
+          🔒 Brackets are locked! Picks closed at 9:00 AM CT on March 19.
+        </div>
+      )}
       {message && <div className={`message-bar ${message.error ? 'error' : 'success'}`}>{message.text}</div>}
       <div className="bracket-cards">
         {brackets.map(b => (
@@ -282,11 +292,11 @@ export default function MyBracket() {
             ))}
           </div>
           <div className="scroll-hint">← Swipe to scroll bracket →</div>
-          <BracketView games={games} picks={picks} onPickTeam={handlePick} region={region} showPicks={true} odds={odds} />
+          <BracketView games={games} picks={picks} onPickTeam={isLocked ? null : handlePick} region={region} showPicks={true} odds={odds} />
           <div className="save-bar">
             <span className="pick-count"><strong>{activeBracket.name}</strong> — <strong>{pickedCount}</strong>/63</span>
-            <button className="btn btn-primary" onClick={handleSave} disabled={saving || pickedCount === 0}>
-              {saving ? 'Saving...' : 'Save Bracket'}
+            <button className="btn btn-primary" onClick={handleSave} disabled={saving || pickedCount === 0 || isLocked}>
+              {isLocked ? '🔒 Locked' : saving ? 'Saving...' : 'Save Bracket'}
             </button>
           </div>
         </>
